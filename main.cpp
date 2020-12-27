@@ -477,7 +477,7 @@ int serial_read(const char *buf) {
 			case AUTO_WAIT_NETWORK:
 				if (strstr(buf,"+CGEV: ME PDN ACT")==buf){
 					state = AUTO_SETUP_RNDIS;
-					fprintf(stderr,"Debug: mode change from AUTO_SETUP_MS_MODE to AUTO_SETUP_RNDIS\n");
+					fprintf(stderr,"Debug: mode change from AUTO_WAIT_NETWORK to AUTO_SETUP_RNDIS\n");
 				}
 				break;
 
