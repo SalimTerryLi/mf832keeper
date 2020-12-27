@@ -7,8 +7,8 @@
 
 #define STATE_NAME_LEN 32
 
-enum STATE{
-	UNKNOWN=0,
+enum STATE {
+	UNKNOWN = 0,
 	AUTO_TEST_AT,
 	AUTO_SETUP_PDP,
 	AUTO_SETUP_MS_MODE,
@@ -23,7 +23,7 @@ extern const char state_name[][STATE_NAME_LEN];
 // state_poll_timeout_s[state_count]
 extern const int state_poll_timeout_s[];
 
-const char* get_state_name(STATE state);
+const char *get_state_name(STATE state);
 
 int get_state_poll_timeout_ms(STATE state);
 

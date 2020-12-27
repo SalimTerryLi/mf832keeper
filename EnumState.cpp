@@ -5,7 +5,7 @@
 #include "EnumState.h"
 
 // state_name[state_count][name_max_len]
-const char state_name[][STATE_NAME_LEN]={
+const char state_name[][STATE_NAME_LEN] = {
 		{"UNKNOWN"},
 		{"AUTO_TEST_AT"},
 		{"AUTO_SETUP_PDP"},
@@ -16,7 +16,7 @@ const char state_name[][STATE_NAME_LEN]={
 
 };
 // state_poll_timeout_s[state_count]
-const int state_poll_timeout_s[]={
+const int state_poll_timeout_s[] = {
 		-1,
 		3,
 		3,
@@ -26,13 +26,14 @@ const int state_poll_timeout_s[]={
 		-1
 };
 
-static_assert(sizeof(state_name)/STATE_NAME_LEN == static_cast<int>(__STATE_END), "state_name Enum not match");
-static_assert(sizeof(state_poll_timeout_s) / sizeof(int) == static_cast<int>(__STATE_END), "state_poll_timeout_s Enum not match");
+static_assert(sizeof(state_name) / STATE_NAME_LEN == static_cast<int>(__STATE_END), "state_name Enum not match");
+static_assert(sizeof(state_poll_timeout_s) / sizeof(int) == static_cast<int>(__STATE_END),
+              "state_poll_timeout_s Enum not match");
 
-const char* get_state_name(STATE state){
+const char *get_state_name(STATE state) {
 	return state_name[static_cast<int>(state)];
 }
 
-int get_state_poll_timeout_ms(STATE state){
+int get_state_poll_timeout_ms(STATE state) {
 	return state_poll_timeout_s[static_cast<int>(state)] * 1000;
 }
