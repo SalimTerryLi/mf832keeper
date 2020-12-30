@@ -30,6 +30,7 @@ bool app_force_poll_continue = false; // above one responses for AT cmds, and th
  */
 int poll_timeout_remain = -1;   // record how long should the AT command keep hanging
 bool is_manual_mode = false;    // DO NOT CHANGE
+bool perform_soft_reset = false;
 // System wide buffers for IO. Don't forget to check length.
 char w_buf[64] = {0};
 char r_buf[64] = {0};
@@ -87,7 +88,8 @@ void print_help_message(char *exec_name) {
 	char help_msg[] = "Help page\n\
 %s -d /dev/ttyXXXX [-m] [-l file]\n\
 \t -l log file, default to argv[0]+\".log\"\n\
-\t -m manual: disable automatic init procedure\n";
+\t -m manual: disable automatic init procedure\n\
+\t -r soft-reset device";
 	printf(help_msg, exec_name);
 }
 
@@ -155,7 +157,7 @@ int main(int argc, char *argv[]) {
 
 	// parse cmd options
 	int option;
-	while ((option = getopt(argc, argv, "d:hl:m")) != -1) {
+	while ((option = getopt(argc, argv, "d:hl:mr")) != -1) {
 		switch (option) {
 			case 'd':
 				if (strlen(optarg) > DEV_FILENAME_LEN) {
@@ -179,6 +181,10 @@ int main(int argc, char *argv[]) {
 
 			case 'm':
 				is_manual_mode = true;
+				break;
+
+			case 'r':
+				perform_soft_reset = true;
 				break;
 
 			case '?':
@@ -240,6 +246,12 @@ void int_handler(int) {
 }
 
 int loop() {
+	if (perform_soft_reset) {    // first deal with this case
+		sprintf(w_buf, "AT+ZSOFTRESET");
+		serial_write(w_buf);
+		return 0;
+	}
+
 	int ret = 0;
 	bool should_exit = false;
 	/*
