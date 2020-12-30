@@ -9,11 +9,12 @@
 
 enum STATE {
 	UNKNOWN = 0,
-	AUTO_TEST_AT,
-	AUTO_SETUP_PDP,
-	AUTO_SETUP_MS_MODE,
-	AUTO_WAIT_NETWORK,
-	AUTO_SETUP_RNDIS,
+	ERROR,
+	TEST_AT,
+	SETUP_PDP,
+	SETUP_MS_MODE,
+	PENDING_SETUP_RNDIS,
+	SETUP_RNDIS,
 	CONNECTED,
 	__STATE_END // padded ending for compile check
 };
@@ -26,6 +27,8 @@ extern const int state_poll_timeout_s[];
 const char *get_state_name(STATE state);
 
 int get_state_poll_timeout_ms(STATE state);
+
+bool should_perform_action(STATE state);
 
 
 #endif //ENUMSTATE_H

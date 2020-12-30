@@ -16,9 +16,20 @@
 
 int serial_fd = -1;
 FILE *log_f = nullptr;
+/*
+ * state SHOULD NOT CHANGE when is_at_cmd_performing == true
+ */
 STATE state = UNKNOWN;    // this is maintained by program
-bool is_state_change_performing = false; // unset when operate device into new mode, set when OK received
-bool is_manual_mode = false;
+bool is_at_cmd_performing = false; // PRIVATE unset when operate device into new mode, set when OK or ERROR received
+bool app_force_poll_continue = false; // above one responses for AT cmds, and this one responses for non-ATs
+/*
+ * default to -1, but will be set when any AT cmd(and possibly invalid input) is going to be performed
+ * will be updated once poll returned as following:
+ * if poll_timeout_remain != -1, poll_timeout_remain = poll_timeout_remain - time_elapsed
+ * if poll_timeout_remain < 0, poll_timeout_remain = 0
+ */
+int poll_timeout_remain = -1;   // record how long should the AT command keep hanging
+bool is_manual_mode = false;    // DO NOT CHANGE
 // System wide buffers for IO. Don't forget to check length.
 char w_buf[64] = {0};
 char r_buf[64] = {0};
@@ -239,51 +250,50 @@ int loop() {
 	 */
 	while (!should_exit) {
 		// do something
-		switch (state) {
-			// Do what state tells you
-			case UNKNOWN:
-				if (!is_manual_mode) {
-					state = AUTO_TEST_AT;
-					continue;
-				}
-				break;
+		if (!is_at_cmd_performing and !app_force_poll_continue) {    // no AT cmd is performing, safe to do other things
+			// set poll timeout for the first time
+			poll_timeout_remain = get_state_poll_timeout_ms(state); // init timeout
 
-			case AUTO_TEST_AT:
-				if (!is_state_change_performing) {
+			switch (state) {
+				// Do what state tells you
+				case UNKNOWN:
+					if (!is_manual_mode) {
+						state = TEST_AT;
+						continue;
+					}
+					break;
+
+				case TEST_AT:
 					sprintf(w_buf, "AT");
 					serial_write(w_buf);
-					is_state_change_performing = true;
-				}
-				break;
-			case AUTO_SETUP_PDP:
-				if (!is_state_change_performing) {
+					break;
+
+				case SETUP_PDP:
 					sprintf(w_buf, "AT+CGDCONT=1,\"IPV4V6\",\"ctnet\"");
 					serial_write(w_buf);
-					is_state_change_performing = true;
-				}
-				break;
-			case AUTO_SETUP_MS_MODE:
-				if (!is_state_change_performing) {
+					break;
+
+				case SETUP_MS_MODE:
 					sprintf(w_buf, "AT+CFUN=1");
 					serial_write(w_buf);
-					is_state_change_performing = true;
-				}
-				break;
-			case AUTO_WAIT_NETWORK:
-				break;
-			case AUTO_SETUP_RNDIS:
-				if (!is_state_change_performing) {
+					break;
+
+				case PENDING_SETUP_RNDIS:
+					app_force_poll_continue = true;
+					break;
+
+				case SETUP_RNDIS:
 					sprintf(w_buf, "AT+ZGACT=1,1");
 					serial_write(w_buf);
-					is_state_change_performing = true;
-				}
-				break;
-			case CONNECTED:
-				break;
+					break;
 
-			case __STATE_END:
-				// Invalid situation
-				exit(0xff);
+				case CONNECTED:
+					break;
+
+				case __STATE_END:
+					// Invalid situation
+					exit(0xff);
+			}
 		}
 
 		// then poll
@@ -293,14 +303,41 @@ int loop() {
 		p_fd[1].events = POLLIN;    // input data available
 		p_fd[1].fd = 0;             // stdin
 
-		int rdy = poll(p_fd, 2, get_state_poll_timeout_ms(state));
+		int rdy;
+		if (poll_timeout_remain > 0) {
+			// mark when poll is started
+			struct timespec spec{};
+			clock_gettime(CLOCK_MONOTONIC, &spec);
+			int64_t timestamp_before_poll_ms =
+					spec.tv_sec * 1000 + static_cast<int64_t>(spec.tv_nsec / 1e6);   // too ugly
+			// poll
+			rdy = poll(p_fd, 2, poll_timeout_remain);
+			// update poll_timeout_remain
+			clock_gettime(CLOCK_MONOTONIC, &spec);
+			int64_t timestamp_after_poll_ms =
+					spec.tv_sec * 1000 + static_cast<int64_t>(spec.tv_nsec / 1e6);   // too ugly
+			poll_timeout_remain =
+					poll_timeout_remain - static_cast<int>(timestamp_after_poll_ms - timestamp_before_poll_ms);
+			if (poll_timeout_remain < 0) {
+				poll_timeout_remain = 0;
+			}
+		} else {
+			rdy = poll(p_fd, 2, poll_timeout_remain);
+		}
+
 		if (rdy == -1) {
 			fprintf(stderr, "Error: poll %d\n", errno);
 		} else if (rdy == 0) {   // timeout
 			switch (state) {
 				// action of state is already performed, but you still get timeout here
-				case AUTO_TEST_AT:
+				case TEST_AT:
 					fprintf(stderr, "Error: device not responses to AT cmd\n");
+					should_exit = true;
+					ret = -13;
+					break;
+
+				case PENDING_SETUP_RNDIS:
+					fprintf(stderr, "Error: waiting for network timeout\n");
 					should_exit = true;
 					ret = -13;
 					break;
@@ -439,8 +476,11 @@ int open_serial(const char *file) {
 int serial_write(const char *buf) {
 	get_time_str();
 	fprintf(log_f, "%s\t%s\n", t_buf, buf);
-	int ret = dprintf(serial_fd, "%s\r\n", buf);
-	return static_cast<int>(ret - (strlen(buf) + 2));
+	int ret = static_cast<int>(dprintf(serial_fd, "%s\r\n", buf) - (strlen(buf) + 2));
+	if (ret == 0) {
+		is_at_cmd_performing = true;    // write anything will cause modem responding
+	}
+	return ret;
 }
 
 int serial_read(const char *buf) {
@@ -450,40 +490,45 @@ int serial_read(const char *buf) {
 	}
 	//printf("%s\n",buf);
 	if (strstr(buf, "OK") == buf) {
-		is_state_change_performing = false;
+		is_at_cmd_performing = false;
 		switch (state) {
-			case AUTO_TEST_AT:
-				state = AUTO_SETUP_PDP;
-				fprintf(stderr, "Debug: mode change from AUTO_TEST_AT to AUTO_SETUP_PDP\n");
+			case TEST_AT:
+				state = SETUP_PDP;
+				fprintf(stderr, "Debug: mode change from TEST_AT to SETUP_PDP\n");
 				break;
 
-			case AUTO_SETUP_PDP:
-				state = AUTO_SETUP_MS_MODE;
-				fprintf(stderr, "Debug: mode change from AUTO_SETUP_PDP to AUTO_SETUP_MS_MODE\n");
+			case SETUP_PDP:
+				state = SETUP_MS_MODE;
+				fprintf(stderr, "Debug: mode change from SETUP_PDP to SETUP_MS_MODE\n");
 				break;
 
-			case AUTO_SETUP_MS_MODE:
+			case SETUP_MS_MODE:
 				// do nothing, as this mode switch happend only if valid network
-				state = AUTO_WAIT_NETWORK;
-				fprintf(stderr, "Debug: mode change from AUTO_SETUP_MS_MODE to AUTO_WAIT_NETWORK\n");
+				state = PENDING_SETUP_RNDIS;
+				fprintf(stderr, "Debug: mode change from SETUP_MS_MODE to PENDING_SETUP_RNDIS\n");
 				break;
 
-			case AUTO_SETUP_RNDIS:
+			case SETUP_RNDIS:
 				state = CONNECTED;
-				fprintf(stderr, "Debug: mode change from AUTO_SETUP_RNDIS to CONNECTED\n");
+				fprintf(stderr, "Debug: mode change from SETUP_RNDIS to CONNECTED\n");
 				break;
 
 			default:
 				break;
 		}
 	} else if (strstr(buf, "+CME ERROR:") == buf) {
+		is_at_cmd_performing = false;
 		fprintf(stderr, "Error: %s\n", buf);
+		fprintf(stderr, "Debug: mode change from %s to ERROR\n", get_state_name(state));
+		state = ERROR;
+		exit(-16);
 	} else if (strstr(buf, "+CGEV") == buf) {
 		switch (state) {
-			case AUTO_WAIT_NETWORK:
+			case PENDING_SETUP_RNDIS:
+				app_force_poll_continue = false;
 				if (strstr(buf, "+CGEV: ME PDN ACT") == buf) {
-					state = AUTO_SETUP_RNDIS;
-					fprintf(stderr, "Debug: mode change from AUTO_WAIT_NETWORK to AUTO_SETUP_RNDIS\n");
+					state = SETUP_RNDIS;
+					fprintf(stderr, "Debug: mode change from PENDING_SETUP_RNDIS to SETUP_RNDIS\n");
 				}
 				break;
 
