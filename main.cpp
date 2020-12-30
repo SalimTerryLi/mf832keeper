@@ -490,7 +490,11 @@ int serial_write(const char *buf) {
 	fprintf(log_f, "%s\t%s\n", t_buf, buf);
 	int ret = static_cast<int>(dprintf(serial_fd, "%s\r\n", buf) - (strlen(buf) + 2));
 	if (ret == 0) {
-		is_at_cmd_performing = true;    // write anything will cause modem responding
+		if (!is_manual_mode) {
+			is_at_cmd_performing = true;    // write anything will cause modem responding
+		}
+	} else {
+		fprintf(stderr, "Error: serial_write %d\n", ret);
 	}
 	return ret;
 }
